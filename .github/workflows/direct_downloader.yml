@@ -81,32 +81,19 @@ jobs:
             echo "🔗 URL: $URL"
             echo "========================================"
             
-            # --- هک هوشمند استخراج فرمت واقعی ---
-            # ابتدا بررسی می‌کنیم خود لینک چه پسوندی دارد
+            # پاک کردن پارامترهای اضافی لینک برای پیدا کردن پسوند واقعی (مثل apk یا zip)
             CLEAN_URL=$(echo "$URL" | cut -d? -f1)
             LINK_EXT="${CLEAN_URL##*.}"
             
-            # نام فایلی که yt-dlp پیشنهاد می‌دهد را می‌گیریم
-            DETECTED_NAME=$(yt-dlp --proxy "socks5://127.0.0.1:1080" --print filename "$URL" 2>/dev/null || echo "")
-            DETECTED_EXT="${DETECTED_NAME##*.}"
-            
-            # اگر فرمت تشخیص داده شده نامشخص یا خیلی طولانی بود، از پسوند لینک استفاده کن
-            if [ -z "$DETECTED_EXT" ] || [ "$DETECTED_EXT" = "unknown" ] || [ ${#DETECTED_EXT} -gt 5 ]; then
-              FINAL_EXT="$LINK_EXT"
-            else
-              FINAL_EXT="$DETECTED_EXT"
+            # اگر پسوند به هر دلیلی خراب بود یا تشخیص داده نشد، پیش‌فرض را zip بگذار
+            if [ -z "$LINK_EXT" ] || [ ${#LINK_EXT} -gt 5 ]; then
+              LINK_EXT="zip"
             fi
-            
-            # اگر پسوند نهایی باز هم خالی یا نامعتبر بود، به صورت پیش‌فرض zip بگذار
-            if [ -z "$FINAL_EXT" ] || [ ${#FINAL_EXT} -gt 5 ]; then
-              FINAL_EXT="zip"
-            fi
-            # -------------------------------------
 
-            # دانلود نوبتی فایل‌ها با اعمال فرمت دقیق و قطعی شده
+            # دانلود مستقیم و نوبتی با پسوند استخراج شده از لینک
             yt-dlp --proxy "socks5://127.0.0.1:1080" \
                    --no-cache-dir \
-                   --output "downloaded_files/%(title)s.${FINAL_EXT}" \
+                   --output "downloaded_files/%(title)s.${LINK_EXT}" \
                    --no-playlist \
                    --retries 5 \
                    "$URL" || echo "❌ Failed to download File [$CURRENT_INDEX]"
