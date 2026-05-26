@@ -1,0 +1,147 @@
+name: 06 - ⚡ Advanced Direct Link Downloader (Queue Mode)
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_urls:
+        description: '🔗 لینک‌های مستقیم فایل‌ها - چند لینک را با فاصله از هم جدا کنید'
+        required: true
+        type: string
+
+jobs:
+  queue-download:
+    name: "⚡ Processing Download Queue"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+
+    steps:
+      - name: Show Welcome Notice
+        run: |
+          echo "========================================"
+          echo "⚡ ADM-STYLE DIRECT LINK DOWNLOADER"
+          echo "========================================"
+          echo "📥 Queue System: Enabled (One by One)"
+          echo "🚀 Engine: aria2 Multi-connection"
+          echo "========================================"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --global http.postBuffer 524288000
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      - name: Start WARP Container
+        run: |
+          echo "Starting Cloudflare WARP for bypass..."
+          docker network create warp-net || true
+          docker run -d \
+            --name warp \
+            --restart=always \
+            --network warp-net \
+            -p 1080:1080 \
+            --cap-add NET_ADMIN \
+            -v warp-data:/var/lib/cloudflare-warp \
+            caomingjun/warp
+          sleep 15
+
+      - name: Install Network & Download Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y aria2 curl jq
+
+      - name: Execute Sequential Download Queue
+        env:
+          URLS_INPUT: ${{ github.event.inputs.download_urls }}
+        run: |
+          mkdir -p downloaded_files
+          
+          # تبدیل رشته ورودی به یک آرایه واقعی در بَش
+          read -ra URL_ARRAY <<< "$URLS_INPUT"
+          TOTAL_FILES=${#URL_ARRAY[@]}
+          
+          echo "📋 Total files in queue: $TOTAL_FILES"
+          echo "----------------------------------------"
+
+          CURRENT_INDEX=0
+          for URL in "${URL_ARRAY[@]}"; do
+            CURRENT_INDEX=$((CURRENT_INDEX + 1))
+            
+            echo ""
+            echo "========================================"
+            echo "🔄 Processing File [$CURRENT_INDEX / $TOTAL_FILES]"
+            echo "🔗 URL: $URL"
+            echo "========================================"
+            
+            # استخراج نام فایل از انتهای لینک؛ اگر نامشخص بود از یک نام رندوم استفاده می‌کند
+            FILE_NAME=$(basename "${URL%%?*}" | cut -d? -f1)
+            if [ -z "$FILE_NAME" ] || [[ "$FILE_NAME" == *"/"* ]]; then
+              FILE_NAME="file_${CURRENT_INDEX}_$(date +%s)"
+            fi
+            
+            echo "💾 Saving as: $FILE_NAME"
+            
+            # دانلود نوبتی با استفاده از حداکثر توان قدرت aria2 به همراه پروکسی وارپ
+            # -x16 و -s16 فایل را به ۱۶ تکه مجزا تقسیم می‌کنند تا سرعت دانلود به سقف برسد
+            aria2c --all-proxy="socks5://127.0.0.1:1080" \
+                   -x 16 \
+                   -s 16 \
+                   -k 1M \
+                   --max-tries=5 \
+                   --retry-wait=3 \
+                   --file-allocation=none \
+                   -d "downloaded_files" \
+                   -o "$FILE_NAME" \
+                   "$URL"
+            
+            if [ $? -eq 0 ]; then
+              echo "✅ File [$CURRENT_INDEX] downloaded successfully!"
+            else
+              echo "❌ Failed to download File [$CURRENT_INDEX]"
+            fi
+            echo "----------------------------------------"
+          done
+
+      - name: Stop WARP Container
+        if: always()
+        run: |
+          docker stop warp || true
+          docker rm warp || true
+
+      - name: Commit and Push to Repository
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+          
+          git config set advice.addIgnoredFile false || true
+          git add downloaded_files/ 2>/dev/null || git add -f downloaded_files/
+
+          if ! git diff --cached --quiet; then
+            git commit -m "[SYSTEM] Direct queue downloads completed [skip ci]"
+            
+            PUSH_RETRY=0
+            while [ $PUSH_RETRY -lt 5 ]; do
+              PUSH_RETRY=$((PUSH_RETRY + 1))
+              if timeout 60 git push origin HEAD:"$BRANCH"; then
+                echo "========================================"
+                echo "✅ تمام فایل‌های صف با موفقیت در مخزن ذخیره شدند!"
+                echo "========================================"
+                break
+              else
+                echo "Push failed, retry $PUSH_RETRY/5..."
+                sleep 5
+                git fetch origin "$BRANCH"
+                git reset --hard origin/"$BRANCH"
+                git add downloaded_files/ 2>/dev/null || git add -f downloaded_files/
+                git diff --cached --quiet || git commit -m "[SYSTEM] Direct queue downloads completed [skip ci]"
+              fi
+            done
+          else
+            echo "ℹ️ No new files added to the repository."
+          fi
