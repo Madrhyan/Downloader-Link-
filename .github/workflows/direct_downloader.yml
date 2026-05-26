@@ -1,92 +1,58 @@
-name: 06 - ⚡ Advanced Direct Link Downloader (Queue Mode)
+name: Download File via Cloudflare WARP
 
 on:
   workflow_dispatch:
     inputs:
-      download_urls:
-        description: '🔗 لینک‌های مستقیم فایل‌ها - چند لینک را با فاصله از هم جدا کنید'
+      file_url:
+        description: 'Direct Link to Download'
         required: true
-        type: string
+        default: 'https://example.com/file.zip'
 
 jobs:
-  queue-download:
-    name: "⚡ Processing Download Queue"
+  download_job:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    permissions:
-      contents: write
 
     steps:
-      - name: Show Welcome Notice
-        run: |
-          echo "========================================"
-          echo "⚡ ADM-STYLE DIRECT LINK DOWNLOADER"
-          echo "========================================"
-          echo "📥 Queue System: Enabled (One by One)"
-          echo "🚀 Engine: yt-dlp Stable Core"
-          echo "========================================"
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
+    - name: Install and Configure Cloudflare WARP
+      run: |
+        # 1. اضافه کردن ریپازیتوری کلاودفلر
+        curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+        
+        # 2. نصب کلاینت WARP
+        sudo apt-get update && sudo apt-get install cloudflare-warp -y
+        
+        # 3. ثبت‌نام و اتصال به شبکه WARP
+        warp-cli --accept-tos registration new
+        warp-cli --accept-tos mode warp
+        warp-cli --accept-tos connect
+        
+        # 4. تست اتصال
+        sleep 5
+        curl -s https://www.cloudflare.com/cdn-cgi/trace
 
-      - name: Start WARP Container
-        run: |
-          echo "Starting Cloudflare WARP for bypass..."
-          docker network create warp-net || true
-          docker run -d \
-            --name warp \
-            --restart=always \
-            --network warp-net \
-            -p 1080:1080 \
-            --cap-add NET_ADMIN \
-            -v warp-data:/var/lib/cloudflare-warp \
-            caomingjun/warp
-          sleep 15
+    - name: Create Downloads Directory & Download File
+      run: |
+        # ایجاد پوشه جدید در ریشه ریپازیتوری
+        mkdir -p downloads
+        
+        echo "Starting download from: ${{ github.event.inputs.file_url }}"
+        
+        # استخراج نام فایل از انتهای لینک (گزینه اختیاری برای حفظ نام واقعی فایل)
+        FILE_NAME=$(basename "${{ github.event.inputs.file_url }}")
+        
+        # دانلود فایل و ذخیره مستقیم در پوشه downloads
+        curl -L "${{ github.event.inputs.file_url }}" -o "downloads/$FILE_NAME"
+        
+        echo "Download completed!"
+        ls -lh downloads/
 
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-pip curl jq
-          pip3 install --upgrade yt-dlp
-
-      - name: Execute Sequential Download Queue
-        env:
-          URLS_INPUT: ${{ github.event.inputs.download_urls }}
-        run: |
-          mkdir -p downloaded_files
-          
-          # تبدیل ورودی به آرایه بش
-          read -ra URL_ARRAY <<< "$URLS_INPUT"
-          TOTAL_FILES=${#URL_ARRAY[@]}
-          
-          echo "📋 Total files in queue: $TOTAL_FILES"
-          echo "----------------------------------------"
-
-          CURRENT_INDEX=0
-          for URL in "${URL_ARRAY[@]}"; do
-            CURRENT_INDEX=$((CURRENT_INDEX + 1))
-            
-            echo ""
-            echo "========================================"
-            echo "🔄 Processing File [$CURRENT_INDEX / $TOTAL_FILES]"
-            echo "🔗 URL: $URL"
-            echo "========================================"
-            
-            # دانلود نوبتی فایل‌ها (بدون سوییچ پروکسی)
-            yt-dlp --no-cache-dir \
-                   --output "downloaded_files/%(title)s.%(ext)s" \
-                   --no-playlist \
-                   --retries 5 \
-                   "$URL" || echo "❌ Failed to download File [$CURRENT_INDEX]"
-            
-            echo "----------------------------------------"
-          done
-
-      - name: Stop WARP Container
-        if: always()
-        run: |
-          docker stop warp || true
-          docker rm warp || true
+    - name: Upload Folder as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: all-downloaded-files
+        # اینجا کل پوشه downloads را به عنوان آرتیفکت آپلود می‌کنیم
+        path: downloads/
