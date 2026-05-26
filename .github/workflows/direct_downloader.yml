@@ -23,7 +23,7 @@ jobs:
           echo "⚡ ADM-STYLE DIRECT LINK DOWNLOADER"
           echo "========================================"
           echo "📥 Queue System: Enabled (One by One)"
-          echo "🚀 Engine: yt-dlp + Auto Extension Fixer"
+          echo "🚀 Engine: yt-dlp Stable Core"
           echo "========================================"
 
       - name: Checkout
@@ -55,7 +55,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-pip curl jq file
+          sudo apt-get install -y python3-pip curl jq
           pip3 install --upgrade yt-dlp
 
       - name: Execute Sequential Download Queue
@@ -64,6 +64,7 @@ jobs:
         run: |
           mkdir -p downloaded_files
           
+          # تبدیل ورودی به آرایه بش
           read -ra URL_ARRAY <<< "$URLS_INPUT"
           TOTAL_FILES=${#URL_ARRAY[@]}
           
@@ -80,48 +81,36 @@ jobs:
             echo "🔗 URL: $URL"
             echo "========================================"
             
-            # استخراج پسوند احتمالی از انتهای لینک برای زاپاس
+            # --- هک هوشمند استخراج فرمت واقعی ---
+            # ابتدا بررسی می‌کنیم خود لینک چه پسوندی دارد
             CLEAN_URL=$(echo "$URL" | cut -d? -f1)
-            EXT="${CLEAN_URL##*.}"
-            # اگر پسوند خیلی طولانی یا عجیب بود، موقتاً خالی بماند
-            if [ ${#EXT} -gt 5 ]; then EXT="download"; fi
+            LINK_EXT="${CLEAN_URL##*.}"
+            
+            # نام فایلی که yt-dlp پیشنهاد می‌دهد را می‌گیریم
+            DETECTED_NAME=$(yt-dlp --proxy "socks5://127.0.0.1:1080" --print filename "$URL" 2>/dev/null || echo "")
+            DETECTED_EXT="${DETECTED_NAME##*.}"
+            
+            # اگر فرمت تشخیص داده شده نامشخص یا خیلی طولانی بود، از پسوند لینک استفاده کن
+            if [ -z "$DETECTED_EXT" ] || [ "$DETECTED_EXT" = "unknown" ] || [ ${#DETECTED_EXT} -gt 5 ]; then
+              FINAL_EXT="$LINK_EXT"
+            else
+              FINAL_EXT="$DETECTED_EXT"
+            fi
+            
+            # اگر پسوند نهایی باز هم خالی یا نامعتبر بود، به صورت پیش‌فرض zip بگذار
+            if [ -z "$FINAL_EXT" ] || [ ${#FINAL_EXT} -gt 5 ]; then
+              FINAL_EXT="zip"
+            fi
+            # -------------------------------------
 
-            # دانلود با تنظیمات حفظ فرمت اصلی و استفاده از نام پیش‌فرض سرور
+            # دانلود نوبتی فایل‌ها با اعمال فرمت دقیق و قطعی شده
             yt-dlp --proxy "socks5://127.0.0.1:1080" \
                    --no-cache-dir \
-                   --output "downloaded_files/%(title)s.%(ext)s" \
+                   --output "downloaded_files/%(title)s.${FINAL_EXT}" \
                    --no-playlist \
                    --retries 5 \
-                   --restrict-filenames \
                    "$URL" || echo "❌ Failed to download File [$CURRENT_INDEX]"
             
-            # --- بخش هوشمند تصحیح فرمت و نام ---
-            cd downloaded_files
-            # پیدا کردن آخرین فایل تغییر یافته یا بدون پسوند و تصحیح آن
-            for f in *; do
-              if [ -f "$f" ]; then
-                # اگر اسم فایل unknown بود یا پسوند درستی نداشت
-                if [[ "$f" == "unknown"* ]] || [[ "$f" != *.* ]]; then
-                  # استفاده از ابزار سیستم‌عامل برای تشخیص ماهیت واقعی فایل (apk, zip, mp4 و ...)
-                  MIME_TYPE=$(file --mime-type -b "$f")
-                  REAL_EXT=""
-                  case "$MIME_TYPE" in
-                    "application/vnd.android.package-archive") REAL_EXT="apk" ;;
-                    "application/zip") REAL_EXT="zip" ;;
-                    "video/mp4") REAL_EXT="mp4" ;;
-                    "audio/mpeg") REAL_EXT="mp3" ;;
-                    "image/jpeg") REAL_EXT="jpg" ;;
-                    "image/png") REAL_EXT="png" ;;
-                    *) REAL_EXT="$EXT" ;; # اگر نشناخت، از پسوند لینک استفاده کند
-                  esac
-                  
-                  NEW_NAME="file_${CURRENT_INDEX}_$(date +%s).${REAL_EXT}"
-                  mv "$f" "$NEW_NAME"
-                  echo "🔧 Fixed Extension: Renamed '$f' to '$NEW_NAME' (Type: $MIME_TYPE)"
-                fi
-              fi
-            done
-            cd ..
             echo "----------------------------------------"
           done
 
@@ -146,7 +135,7 @@ jobs:
               PUSH_RETRY=$((PUSH_RETRY + 1))
               if timeout 60 git push origin HEAD:"$BRANCH"; then
                 echo "========================================"
-                echo "✅ فایل‌ها با فرمت اصلاح‌شده ذخیره شدند!"
+                echo "✅ تمام فایل‌ها نوبت به نوبت با موفقیت ذخیره شدند!"
                 echo "========================================"
                 break
               else
