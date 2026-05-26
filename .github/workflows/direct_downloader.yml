@@ -23,7 +23,7 @@ jobs:
           echo "⚡ ADM-STYLE DIRECT LINK DOWNLOADER"
           echo "========================================"
           echo "📥 Queue System: Enabled (One by One)"
-          echo "🚀 Engine: Pure Curl Downloader"
+          echo "🚀 Engine: yt-dlp Stable Core"
           echo "========================================"
 
       - name: Checkout
@@ -37,6 +37,26 @@ jobs:
           git config --global http.postBuffer 524288000
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
+
+      - name: Start WARP Container
+        run: |
+          echo "Starting Cloudflare WARP for bypass..."
+          docker network create warp-net || true
+          docker run -d \
+            --name warp \
+            --restart=always \
+            --network warp-net \
+            -p 1080:1080 \
+            --cap-add NET_ADMIN \
+            -v warp-data:/var/lib/cloudflare-warp \
+            caomingjun/warp
+          sleep 15
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip curl jq
+          pip3 install --upgrade yt-dlp
 
       - name: Execute Sequential Download Queue
         env:
@@ -61,13 +81,22 @@ jobs:
             echo "🔗 URL: $URL"
             echo "========================================"
             
-            # دانلود نوبتی فایل‌ها با curl و حفظ نام و فرمت اصلی فایل از روی هدرهای سرور یا انتهای لینک
-            cd downloaded_files
-            curl -L -O -J "$URL" || echo "❌ Failed to download File [$CURRENT_INDEX]"
-            cd ..
+            # دانلود نوبتی فایل‌ها با موتور پایدار yt-dlp از طریق پروکسی وارپ
+            yt-dlp --proxy "socks5://127.0.0.1:1080" \
+                   --no-cache-dir \
+                   --output "downloaded_files/%(title)s.%(ext)s" \
+                   --no-playlist \
+                   --retries 5 \
+                   "$URL" || echo "❌ Failed to download File [$CURRENT_INDEX]"
             
             echo "----------------------------------------"
           done
+
+      - name: Stop WARP Container
+        if: always()
+        run: |
+          docker stop warp || true
+          docker rm warp || true
 
       - name: Commit and Push to Repository
         run: |
