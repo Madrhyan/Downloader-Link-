@@ -32,12 +32,6 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Configure Git
-        run: |
-          git config --global http.postBuffer 524288000
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-
       - name: Start WARP Container
         run: |
           echo "Starting Cloudflare WARP for bypass..."
@@ -81,9 +75,8 @@ jobs:
             echo "🔗 URL: $URL"
             echo "========================================"
             
-            # دانلود نوبتی فایل‌ها با موتور پایدار yt-dlp از طریق پروکسی وارپ
-            yt-dlp --proxy "socks5://127.0.0.1:1080" \
-                   --no-cache-dir \
+            # دانلود نوبتی فایل‌ها (بدون سوییچ پروکسی)
+            yt-dlp --no-cache-dir \
                    --output "downloaded_files/%(title)s.%(ext)s" \
                    --no-playlist \
                    --retries 5 \
@@ -97,34 +90,3 @@ jobs:
         run: |
           docker stop warp || true
           docker rm warp || true
-
-      - name: Commit and Push to Repository
-        run: |
-          BRANCH="${GITHUB_REF_NAME}"
-          
-          git config set advice.addIgnoredFile false || true
-          git add downloaded_files/ 2>/dev/null || git add -f downloaded_files/
-
-          if ! git diff --cached --quiet; then
-            git commit -m "[SYSTEM] Direct queue downloads completed [skip ci]"
-            
-            PUSH_RETRY=0
-            while [ $PUSH_RETRY -lt 5 ]; do
-              PUSH_RETRY=$((PUSH_RETRY + 1))
-              if timeout 60 git push origin HEAD:"$BRANCH"; then
-                echo "========================================"
-                echo "✅ تمام فایل‌ها نوبت به نوبت با موفقیت ذخیره شدند!"
-                echo "========================================"
-                break
-              else
-                echo "Push failed, retry $PUSH_RETRY/5..."
-                sleep 5
-                git fetch origin "$BRANCH"
-                git reset --hard origin/"$BRANCH"
-                git add downloaded_files/ 2>/dev/null || git add -f downloaded_files/
-                git diff --cached --quiet || git commit -m "[SYSTEM] Direct queue downloads completed [skip ci]"
-              fi
-            done
-          else
-            echo "ℹ️ No new files added to the repository."
-          fi
