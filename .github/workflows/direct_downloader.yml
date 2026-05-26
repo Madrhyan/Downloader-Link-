@@ -23,7 +23,7 @@ jobs:
           echo "⚡ ADM-STYLE DIRECT LINK DOWNLOADER"
           echo "========================================"
           echo "📥 Queue System: Enabled (One by One)"
-          echo "🚀 Engine: aria2 Multi-connection"
+          echo "🚀 Engine: yt-dlp Stable Core"
           echo "========================================"
 
       - name: Checkout
@@ -52,10 +52,11 @@ jobs:
             caomingjun/warp
           sleep 15
 
-      - name: Install Network & Download Tools
+      - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y aria2 curl jq
+          sudo apt-get install -y python3-pip curl jq
+          pip3 install --upgrade yt-dlp
 
       - name: Execute Sequential Download Queue
         env:
@@ -63,7 +64,7 @@ jobs:
         run: |
           mkdir -p downloaded_files
           
-          # تبدیل رشته ورودی به یک آرایه واقعی در بَش
+          # تبدیل ورودی به آرایه بش
           read -ra URL_ARRAY <<< "$URLS_INPUT"
           TOTAL_FILES=${#URL_ARRAY[@]}
           
@@ -80,32 +81,14 @@ jobs:
             echo "🔗 URL: $URL"
             echo "========================================"
             
-            # استخراج نام فایل از انتهای لینک؛ اگر نامشخص بود از یک نام رندوم استفاده می‌کند
-            FILE_NAME=$(basename "${URL%%?*}" | cut -d? -f1)
-            if [ -z "$FILE_NAME" ] || [[ "$FILE_NAME" == *"/"* ]]; then
-              FILE_NAME="file_${CURRENT_INDEX}_$(date +%s)"
-            fi
+            # دانلود نوبتی فایل‌ها با موتور پایدار yt-dlp از طریق پروکسی وارپ
+            yt-dlp --proxy "socks5://127.0.0.1:1080" \
+                   --no-cache-dir \
+                   --output "downloaded_files/%(title)s.%(ext)s" \
+                   --no-playlist \
+                   --retries 5 \
+                   "$URL" || echo "❌ Failed to download File [$CURRENT_INDEX]"
             
-            echo "💾 Saving as: $FILE_NAME"
-            
-            # دانلود نوبتی با استفاده از حداکثر توان قدرت aria2 به همراه پروکسی وارپ
-            # -x16 و -s16 فایل را به ۱۶ تکه مجزا تقسیم می‌کنند تا سرعت دانلود به سقف برسد
-            aria2c --all-proxy="socks5://127.0.0.1:1080" \
-                   -x 16 \
-                   -s 16 \
-                   -k 1M \
-                   --max-tries=5 \
-                   --retry-wait=3 \
-                   --file-allocation=none \
-                   -d "downloaded_files" \
-                   -o "$FILE_NAME" \
-                   "$URL"
-            
-            if [ $? -eq 0 ]; then
-              echo "✅ File [$CURRENT_INDEX] downloaded successfully!"
-            else
-              echo "❌ Failed to download File [$CURRENT_INDEX]"
-            fi
             echo "----------------------------------------"
           done
 
@@ -130,7 +113,7 @@ jobs:
               PUSH_RETRY=$((PUSH_RETRY + 1))
               if timeout 60 git push origin HEAD:"$BRANCH"; then
                 echo "========================================"
-                echo "✅ تمام فایل‌های صف با موفقیت در مخزن ذخیره شدند!"
+                echo "✅ تمام فایل‌ها نوبت به نوبت با موفقیت ذخیره شدند!"
                 echo "========================================"
                 break
               else
